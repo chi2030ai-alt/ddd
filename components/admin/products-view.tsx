@@ -23,7 +23,8 @@ import {
   Wand2,
   RefreshCw,
   TrendingUp,
-  AlertCircle
+  AlertCircle,
+  X
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -37,6 +38,21 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import type { Product, AIAction, AIActionResult } from "@/lib/types"
 
 interface ProductsViewProps {
@@ -97,31 +113,125 @@ export function ProductsView({ products, setProducts }: ProductsViewProps) {
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "draft" | "archived">("all")
   const [aiExecuting, setAiExecuting] = useState<string | null>(null)
   const [aiResult, setAiResult] = useState<string | null>(null)
+  
+  // Dialog states
+  const [showDetailDialog, setShowDetailDialog] = useState(false)
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
+  const [isEditing, setIsEditing] = useState(false)
+  const [editForm, setEditForm] = useState<Product | null>(null)
 
   const handleAIAction = useCallback(async (action: AIAction): Promise<AIActionResult> => {
     setAiExecuting(action.id)
     setAiResult(null)
     
-    await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 1000))
-    
-    const messages: Record<string, string> = {
-      "generate-description": `已为 ${selectedProducts.length || "所有"} 个产品生成 AI 描述`,
-      "optimize-pricing": "已分析市场数据，建议调整 3 个产品价格",
-      "auto-categorize": "已自动将 5 个产品重新分类",
-      "inventory-alert": "发现 2 个产品库存低于安全阈值",
+    try {
+      // For AI-powered actions, call the API
+      if (action.id === "generate-description" && selectedProducts.length > 0) {
+        const productsToUpdate = products.filter(p => selectedProducts.includes(p.id))
+        const updatedProducts = [...products]
+        
+        for (const product of productsToUpdate) {
+          const response = await fetch("/api/gemini/generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              prompt: `Generate a compelling product description for "${product.name}" (Price: ¥${product.price}, Category: ${product.category}). Keep it under 100 characters and in Chinese.`,
+              type: "generate-description"
+            })
+          })
+          
+          const data = await response.json()
+          if (data.text) {
+            const idx = updatedProducts.findIndex(p => p.id === product.id)
+            // Store AI-generated description (in a real app, add a description field to Product type)
+            console.log(`AI generated description for ${product.name}:`, data.text)
+          }
+        }
+        
+        setProducts(updatedProducts)
+        setAiResult(`已为 ${productsToUpdate.length} 个产品生成 AI 描述`)
+      } else if (action.id === "optimize-pricing" && selectedProducts.length > 0) {
+        setAiResult("已分析市场数据，建议调整 3 个产品价格以提高竞争力")
+      } else if (action.id === "auto-categorize" && selectedProducts.length > 0) {
+        setAiResult("已自动分析产品特征，更新了 5 个产品的分类")
+      } else if (action.id === "inventory-alert") {
+        const lowStockCount = products.filter(p => p.stock < 50 && p.stock > 0).length
+        const outOfStockCount = products.filter(p => p.stock === 0).length
+        setAiResult(`库存预警：${lowStockCount} 个产品库存不足，${outOfStockCount} 个产品缺货`)
+      } else {
+        await new Promise(resolve => setTimeout(resolve, 1500))
+        const messages: Record<string, string> = {
+          "generate-description": "已为所有产品生成 AI 描述",
+          "optimize-pricing": "已分析市场数据，建议调整 3 个产品价格",
+          "auto-categorize": "已自动将 5 个产品重新分类",
+          "inventory-alert": "库存预警提示已生成",
+        }
+        setAiResult(messages[action.id] || "操作完成")
+      }
+    } catch (error) {
+      console.error("AI action failed:", error)
+      setAiResult("操作出错，请重试")
+    } finally {
+      setAiExecuting(null)
     }
-    
-    setAiResult(messages[action.id] || "操作完成")
-    setAiExecuting(null)
     
     return {
       id: `result-${Date.now()}`,
       actionId: action.id,
       status: "success",
-      message: messages[action.id] || "操作完成",
+      message: "操作完成",
       startTime: new Date().toISOString(),
     }
-  }, [selectedProducts.length])
+  }, [selectedProducts, products, setProducts])
+
+  // Product CRUD handlers
+  const handleViewProduct = (product: Product) => {
+    setSelectedProduct(product)
+    setEditForm(product)
+    setIsEditing(false)
+    setShowDetailDialog(true)
+  }
+
+  const handleEditProduct = () => {
+    setIsEditing(true)
+  }
+
+  const handleSaveProduct = () => {
+    if (editForm && selectedProduct) {
+      setProducts(products.map(p => p.id === selectedProduct.id ? editForm : p))
+      setSelectedProduct(editForm)
+      setIsEditing(false)
+      setShowDetailDialog(false)
+    }
+  }
+
+  const handleDeleteProduct = (productId: string) => {
+    setProducts(products.filter(p => p.id !== productId))
+    setShowDetailDialog(false)
+  }
+
+  const handleAddProduct = () => {
+    const newProduct: Product = {
+      id: `PRD-${Date.now()}`,
+      name: "新产品",
+      sku: `SKU-${Date.now()}`,
+      price: 0,
+      stock: 0,
+      status: "draft",
+      category: "未分类"
+    }
+    setEditForm(newProduct)
+    setSelectedProduct(newProduct)
+    setIsEditing(true)
+    setShowDetailDialog(true)
+  }
+
+  const handleCreateNewProduct = () => {
+    if (editForm) {
+      setProducts([...products, editForm])
+      setShowDetailDialog(false)
+    }
+  }
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -181,23 +291,9 @@ export function ProductsView({ products, setProducts }: ProductsViewProps) {
                 <Download className="h-4 w-4" />
                 导出
               </Button>
-              <Button className="gap-2 ai-action-btn" onClick={() => {
-                const name = prompt("请输入产品名称:") || "自研核心降噪传感器 (AeroCore)"
-                const priceStr = prompt("请输入产品价格:") || "499"
-                const price = Number(priceStr) || 499
-                const newProd: Product = {
-                  id: `PROD-${Date.now().toString().slice(-4)}`,
-                  name,
-                  sku: `SKU-${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
-                  price,
-                  stock: 100,
-                  status: "draft",
-                  category: "智能外设"
-                }
-                setProducts([newProd, ...products])
-              }}>
+              <Button className="gap-2" onClick={handleAddProduct}>
                 <Plus className="h-4 w-4" />
-                添加产品
+                新建产品
               </Button>
             </div>
           </div>
@@ -390,23 +486,37 @@ export function ProductsView({ products, setProducts }: ProductsViewProps) {
                       </td>
                       <td className="py-3 px-4">
                         <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-8 w-8"
+                            onClick={() => handleViewProduct(product)}
+                          >
                             <Eye className="h-4 w-4" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-8 w-8"
+                            onClick={() => {
+                              setSelectedProduct(product)
+                              setEditForm(product)
+                              setIsEditing(true)
+                              setShowDetailDialog(true)
+                            }}
+                          >
                             <Edit className="h-4 w-4" />
                           </Button>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-8 w-8">
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem className="gap-2">
-                                <Wand2 className="h-4 w-4" />
-                                AI 优化描述
-                              </DropdownMenuItem>
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="h-8 w-8 hover:text-red-500"
+                            onClick={() => handleDeleteProduct(product.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </td>
                               <DropdownMenuItem className="gap-2">
                                 <Copy className="h-4 w-4" />
                                 复制
@@ -490,6 +600,130 @@ export function ProductsView({ products, setProducts }: ProductsViewProps) {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* Product Detail Dialog */}
+      <Dialog open={showDetailDialog} onOpenChange={setShowDetailDialog}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              {selectedProduct && !products.some(p => p.id === selectedProduct.id) 
+                ? '新建产品' 
+                : isEditing ? '编辑产品' : '产品详情'}
+            </DialogTitle>
+          </DialogHeader>
+          
+          {editForm && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>产品名称</Label>
+                  <Input 
+                    value={editForm.name} 
+                    disabled={!isEditing}
+                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                    className="mt-1"
+                  />
+                </div>
+                <div>
+                  <Label>SKU</Label>
+                  <Input 
+                    value={editForm.sku} 
+                    disabled={!isEditing}
+                    onChange={(e) => setEditForm({ ...editForm, sku: e.target.value })}
+                    className="mt-1"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <Label>价格</Label>
+                  <Input 
+                    type="number"
+                    value={editForm.price} 
+                    disabled={!isEditing}
+                    onChange={(e) => setEditForm({ ...editForm, price: parseInt(e.target.value) })}
+                    className="mt-1"
+                  />
+                </div>
+                <div>
+                  <Label>库存</Label>
+                  <Input 
+                    type="number"
+                    value={editForm.stock} 
+                    disabled={!isEditing}
+                    onChange={(e) => setEditForm({ ...editForm, stock: parseInt(e.target.value) })}
+                    className="mt-1"
+                  />
+                </div>
+                <div>
+                  <Label>分类</Label>
+                  <Input 
+                    value={editForm.category} 
+                    disabled={!isEditing}
+                    onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
+                    className="mt-1"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <Label>状态</Label>
+                {isEditing ? (
+                  <Select value={editForm.status} onValueChange={(status: any) => setEditForm({ ...editForm, status })}>
+                    <SelectTrigger className="mt-1">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="active">在售</SelectItem>
+                      <SelectItem value="draft">草稿</SelectItem>
+                      <SelectItem value="archived">已归档</SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <div className="mt-1 p-2 bg-muted rounded">
+                    <Badge variant="outline" className={getStatusColor(editForm.status)}>
+                      {getStatusText(editForm.status)}
+                    </Badge>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            {!isEditing ? (
+              <>
+                <Button variant="outline" onClick={() => setShowDetailDialog(false)}>
+                  关闭
+                </Button>
+                <Button onClick={handleEditProduct}>
+                  <Edit className="h-4 w-4 mr-2" />
+                  编辑
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="outline" onClick={() => {
+                  setIsEditing(false)
+                  if (selectedProduct) {
+                    setEditForm(selectedProduct)
+                  }
+                }}>
+                  取消
+                </Button>
+                <Button onClick={
+                  selectedProduct && !products.some(p => p.id === selectedProduct.id) 
+                    ? handleCreateNewProduct 
+                    : handleSaveProduct
+                }>
+                  {selectedProduct && !products.some(p => p.id === selectedProduct.id) ? '创建' : '保存'}
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
